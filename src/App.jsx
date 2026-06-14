@@ -110,6 +110,38 @@ const styles = `
   .action-btn:hover { background-color: #2ea44f; }
   .action-btn.short { background-color: #da3633; }
   .action-btn.short:hover { background-color: #b62320; }
+  
+  .input-field {
+    background-color: #0d1117;
+    border: 1px solid #30363d;
+    color: #f1f5f9;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: 14px;
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .input-field:focus {
+    border-color: #58a6ff;
+    outline: none;
+  }
+  .pct-btn {
+    background-color: #21262d;
+    border: 1px solid #30363d;
+    color: #c9d1d9;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-family: inherit;
+    flex: 1;
+    text-align: center;
+  }
+  .pct-btn:hover {
+    background-color: #30363d;
+    color: #ffffff;
+  }
   .toast {
     position: fixed; bottom: 20px; right: 20px; padding: 14px 24px; border-radius: 4px; font-weight: bold; z-index: 1000; color: #ffffff;
   }
@@ -125,8 +157,11 @@ export default function App() {
 
   const [orderBook, setOrderBook] = useState({ asks: [], bids: [] });
   const [notification, setNotification] = useState(null);
+  
+  // Interactive Custom Input Form States
+  const [customSize, setCustomSize] = useState('0.01');
 
-  // 1. PERSISTENT ACCOUNT WALLET STATES (LocalStorage Layer)
+  // PERSISTENT ACCOUNT WALLET STATES (LocalStorage Layer)
   const [walletBalance, setWalletBalance] = useState(() => {
     const savedBalance = localStorage.getItem('alpha_quant_balance');
     return savedBalance ? parseFloat(savedBalance) : 100000.00;
@@ -149,7 +184,7 @@ export default function App() {
     localStorage.setItem('alpha_quant_ledger', JSON.stringify(ledger));
   }, [walletBalance, activePositions, ledger]);
 
-  // 2. REAL-TIME EVENT-DRIVEN WEBSOCKET RECEPTOR HOOK
+  // REAL-TIME EVENT-DRIVEN WEBSOCKET RECEPTOR HOOK
   useEffect(() => {
     const tradingPair = `${selectedAsset.toLowerCase()}usdt`;
     const wsUrl = `wss://stream.binance.com:9443/ws/${tradingPair}@depth10@100ms`;
@@ -188,12 +223,31 @@ export default function App() {
     return () => socket.close();
   }, [selectedAsset]);
 
-  // 3. ACCOUNT BALANCE & EXCH_ROUTING LOGIC
+  // RISK PERCENT ALLOCATION SHORTCUT MATH
+  const applyBalancePercentage = (pct) => {
+    const currentSpotPrice = marketData[selectedAsset].currentPrice;
+    if (!currentSpotPrice || currentSpotPrice <= 0) return;
+    
+    const budget = walletBalance * pct;
+    const computedSize = (budget / currentSpotPrice);
+    
+    // Format sizing naturally based on asset profile thresholds
+    if (selectedAsset === 'BTC') setCustomSize(computedSize.toFixed(4));
+    else if (selectedAsset === 'ETH') setCustomSize(computedSize.toFixed(3));
+    else setCustomSize(computedSize.toFixed(1));
+  };
+
+  // ACCOUNT BALANCE & EXCH_ROUTING LOGIC (UPDATED FOR DIRECT MANUAL VALUE CAPTURES)
   const executeMarketOrder = (side) => {
     const currentSpotPrice = marketData[selectedAsset].currentPrice;
-    const sizeMultiplier = selectedAsset === 'BTC' ? 0.05 : selectedAsset === 'ETH' ? 0.5 : 5.0;
-    const simulatedSize = parseFloat((Math.random() * sizeMultiplier + 0.01).toFixed(4));
-    const tradeValue = parseFloat((currentSpotPrice * simulatedSize).toFixed(2));
+    const orderSize = parseFloat(customSize);
+
+    if (isNaN(orderSize) || orderSize <= 0) {
+      triggerToast("CRITICAL: Invalid transaction allocation size entered", "error");
+      return;
+    }
+
+    const tradeValue = parseFloat((currentSpotPrice * orderSize).toFixed(2));
 
     if (side === 'LONG' && tradeValue > walletBalance) {
       triggerToast("CRITICAL: Insufficient Capital for Order Routing Allocation", "error");
@@ -204,18 +258,18 @@ export default function App() {
       setWalletBalance(prev => parseFloat((prev - tradeValue).toFixed(2)));
       setActivePositions(prev => ({
         ...prev,
-        [selectedAsset]: parseFloat(((prev[selectedAsset] || 0) + simulatedSize).toFixed(4))
+        [selectedAsset]: parseFloat(((prev[selectedAsset] || 0) + orderSize).toFixed(4))
       }));
     } else {
       const currentHolding = activePositions[selectedAsset] || 0;
-      if (currentHolding < simulatedSize) {
+      if (currentHolding < orderSize) {
         triggerToast(`CRITICAL: Insufficient Asset Balance to liquidate ${selectedAsset}`, "error");
         return;
       }
       setWalletBalance(prev => parseFloat((prev + tradeValue).toFixed(2)));
       setActivePositions(prev => ({
         ...prev,
-        [selectedAsset]: parseFloat((currentHolding - simulatedSize).toFixed(4))
+        [selectedAsset]: parseFloat((currentHolding - orderSize).toFixed(4))
       }));
     }
 
@@ -224,12 +278,12 @@ export default function App() {
       asset: selectedAsset,
       type: `MARKET_${side}`,
       price: currentSpotPrice,
-      size: simulatedSize,
+      size: orderSize,
       totalValue: tradeValue
     };
 
     setLedger(prev => [tradeEntry, ...prev]);
-    triggerToast(`ROUTED: ${side} ${simulatedSize} ${selectedAsset} @ $${currentSpotPrice}`, 'success');
+    triggerToast(`ROUTED: ${side} ${orderSize} ${selectedAsset} @ $${currentSpotPrice}`, 'success');
   };
 
   const triggerToast = (msg, status) => {
@@ -241,11 +295,15 @@ export default function App() {
     setLedger([]);
     setWalletBalance(100000.00);
     setActivePositions({});
+    setCustomSize('0.01');
     localStorage.removeItem('alpha_quant_ledger');
     localStorage.removeItem('alpha_quant_balance');
     localStorage.removeItem('alpha_quant_positions');
     triggerToast("SYSTEM RESET: Database logs and cash allocations cleared.", "success");
   };
+
+  // Precompute calculated order parameters dynamically
+  const calculatedCost = parseFloat(((marketData[selectedAsset].currentPrice || 0) * (parseFloat(customSize) || 0)).toFixed(2));
 
   return (
     <div className="dashboard-container">
@@ -261,7 +319,7 @@ export default function App() {
       <div className="hud-card">
         <div className="header-panel">
           <div>
-            <h1 className="title-h1">ALPHA QUANT WORKING HUB v1.1</h1>
+            <h1 className="title-h1">ALPHA QUANT WORKING HUB v1.2</h1>
             <div style={{ color: '#6e7681', fontSize: '13px', marginTop: '4px' }}>Real-Time Live Algorithmic Production Workspace</div>
           </div>
           <div style={{ textAlign: 'right' }}>
@@ -319,6 +377,45 @@ export default function App() {
 
         {/* Right Hand: Liquidity Analysis Panels */}
         <div>
+          {/* INTERACTIVE USER MANUAL ORDER FORM CARD */}
+          <div className="hud-card" style={{ borderColor: '#21262d', background: '#1c2128' }}>
+            <h2 className="hud-card-title" style={{ color: '#58a6ff' }}>Execution Management Desk</h2>
+            
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', alignItems: 'center' }}>
+              <div>
+                <label style={{ fontSize: '11px', color: '#8b949e', display: 'block', marginBottom: '6px', fontWeight: 'bold' }}>
+                  ORDER VALUE SIZE ({selectedAsset})
+                </label>
+                <input 
+                  type="number" 
+                  step="0.001"
+                  className="input-field"
+                  value={customSize}
+                  onChange={(e) => setCustomSize(e.target.value)}
+                  placeholder="0.00"
+                />
+                <div style={{ display: 'flex', gap: '5px', marginTop: '8px' }}>
+                  <button className="pct-btn" onClick={() => applyBalancePercentage(0.25)}>25%</button>
+                  <button className="pct-btn" onClick={() => applyBalancePercentage(0.50)}>50%</button>
+                  <button className="pct-btn" onClick={() => applyBalancePercentage(0.75)}>75%</button>
+                  <button className="pct-btn" onClick={() => applyBalancePercentage(1.00)}>100%</button>
+                </div>
+              </div>
+              
+              <div style={{ background: '#0d1117', padding: '12px', borderRadius: '6px', border: '1px solid #30363d', height: '100%', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                <span style={{ fontSize: '10px', color: '#8b949e', display: 'block', textTransform: 'uppercase' }}>Estimated Order Valuation cost</span>
+                <strong style={{ fontSize: '20px', color: '#ffffff', fontFamily: 'monospace', display: 'block', marginTop: '4px' }}>
+                  ${calculatedCost.toLocaleString(undefined, {minimumFractionDigits: 2})} <span style={{fontSize: '12px', color: '#8b949e'}}>USD</span>
+                </strong>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '15px', marginTop: '20px' }}>
+              <button className="action-btn" onClick={() => executeMarketOrder('LONG')}>ROUTE MARKET BUY (LONG)</button>
+              <button className="action-btn short" onClick={() => executeMarketOrder('SHORT')}>ROUTE MARKET SELL (SHORT)</button>
+            </div>
+          </div>
+
           {/* Order Book Depth Canvas */}
           <div className="hud-card">
             <h2 className="hud-card-title">{selectedAsset} Order Depth Liquidity Book</h2>
@@ -344,11 +441,6 @@ export default function App() {
                     </div>
                 ))}
               </div>
-            </div>
-
-            <div style={{ display: 'flex', gap: '15px', marginTop: '20px', paddingTop: '15px', borderTop: '1px dashed #30363d' }}>
-              <button className="action-btn" onClick={() => executeMarketOrder('LONG')}>INSTANT MARKET LONG (BUY)</button>
-              <button className="action-btn short" onClick={() => executeMarketOrder('SHORT')}>INSTANT MARKET SHORT (SELL)</button>
             </div>
           </div>
 
