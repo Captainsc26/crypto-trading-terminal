@@ -1,201 +1,208 @@
 import React, { useState, useEffect } from 'react';
 
+// Custom CSS inline-styles injected directly for simple standalone integration
+const styles = `
+  .dashboard-container {
+    background-color: #0d1117;
+    color: #c9d1d9;
+    font-family: 'Courier New', Courier, monospace;
+    padding: 20px;
+    min-height: 100vh;
+  }
+  .header-panel {
+    border-bottom: 2px solid #21262d;
+    padding-bottom: 15px;
+    margin-bottom: 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .title-h1 {
+    color: #58a6ff;
+    margin: 0;
+    font-size: 24px;
+    letter-spacing: 2px;
+  }
+  .hud-card {
+    background-color: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    padding: 15px;
+    margin-bottom: 20px;
+  }
+  .hud-card-title {
+    color: #8b949e;
+    font-size: 14px;
+    text-transform: uppercase;
+    margin-top: 0;
+    margin-bottom: 15px;
+    border-bottom: 1px dashed #30363d;
+    padding-bottom: 5px;
+  }
+  .workspace-grid {
+    display: grid;
+    grid-template-columns: 1fr 2fr;
+    gap: 20px;
+  }
+  .asset-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 10px;
+    cursor: pointer;
+    border-bottom: 1px solid #21262d;
+    transition: background 0.2s;
+  }
+  .asset-row:hover {
+    background-color: #21262d;
+  }
+  .asset-row.selected {
+    background-color: #1f293d;
+    border-left: 4px solid #58a6ff;
+  }
+  .order-book-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 15px;
+  }
+  .book-side-title {
+    text-align: center;
+    font-weight: bold;
+    padding: 4px;
+    margin-bottom: 8px;
+  }
+  .title-ask { background-color: rgba(248, 81, 73, 0.15); color: #f85149; }
+  .title-bid { background-color: rgba(56, 139, 253, 0.15); color: #38bdf8; }
+  .book-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
+    padding: 3px 6px;
+  }
+  .book-row.ask { color: #f85149; }
+  .book-row.bid { color: #56e39f; }
+  .ledger-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    margin-top: 10px;
+  }
+  .ledger-table th {
+    background-color: #21262d;
+    color: #8b949e;
+    text-align: left;
+    padding: 8px;
+  }
+  .ledger-table td {
+    padding: 8px;
+    border-bottom: 1px solid #21262d;
+  }
+  .action-btn {
+    background-color: #238636;
+    color: #ffffff;
+    border: 1px solid rgba(240, 246, 252, 0.1);
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-family: inherit;
+    cursor: pointer;
+    font-weight: bold;
+  }
+  .action-btn:hover { background-color: #2ea44f; }
+  .action-btn.short { background-color: #da3633; }
+  .action-btn.short:hover { background-color: #b62320; }
+  .toast {
+    position: fixed; bottom: 20px; right: 20px; padding: 14px 24px; border-radius: 4px; font-weight: bold; z-index: 1000;
+  }
+`;
+
 export default function App() {
+  // 1. Multi-Asset State Tracking Engine
   const [selectedAsset, setSelectedAsset] = useState('BTC');
   const [marketData, setMarketData] = useState({
     BTC: { name: 'Bitcoin', currentPrice: 63646.00, priceChange24h: 1.17, aiSummary: 'Analyzing alpha metrics...' },
     ETH: { name: 'Ethereum', currentPrice: 3450.50, priceChange24h: -1.24, aiSummary: 'Aggregating order book depth across liquid chains...' },
     SOL: { name: 'Solana', currentPrice: 145.25, priceChange24h: 4.87, aiSummary: 'High throughput pipeline signaling break-out momentum...' }
   });
-  const [isConnected, setIsConnected] = useState(false);
 
-  // Advanced States: Portfolio, Input Order, Ledger History, and Simulated Order Book
-  const [portfolio, setPortfolio] = useState({
-    cashBalance: 100000.00,
-    positions: { BTC: 0, ETH: 0, SOL: 0 },
-    avgBuyPrice: { BTC: 0, ETH: 0, SOL: 0 }
+  // 2. High-Frequency Order Book Liquidity Data Simulator
+  const [orderBook, setOrderBook] = useState({ asks: [], bids: [] });
+
+  // 3. PERSISTENT AUDIT LEDGER STATE (UPGRADED FOR LOCALSTORAGE WALLET PERSISTENCE)
+  const [ledger, setLedger] = useState(() => {
+    const savedLedger = localStorage.getItem('alpha_quant_ledger');
+    return savedLedger ? JSON.parse(savedLedger) : [];
   });
-  const [tradeAmount, setTradeAmount] = useState('');
-  const [ledger, setLedger] = useState([]);
-  const [orderBook, setOrderBook] = useState({ bids: [], asks: [] });
+
+  // Global Notifications system
   const [notification, setNotification] = useState(null);
 
-  // Establish continuous data connection pipelines
+  // Sync Ledger State Updates back to browser localStorage automatically
   useEffect(() => {
-    const eventSource = new EventSource('http://localhost:8080/api/crypto/stream');
-    eventSource.onopen = () => setIsConnected(true);
-    
-    eventSource.onmessage = (e) => {
-      try {
-        const incoming = JSON.parse(e.data);
-        const ticker = incoming.symbol || 'BTC'; 
-        setMarketData(prev => ({
-          ...prev,
-          [ticker]: {
-            name: incoming.name || prev[ticker].name,
-            currentPrice: incoming.currentPrice,
-            priceChange24h: incoming.priceChange24h,
-            aiSummary: incoming.aiSummary || prev[ticker].aiSummary
-          }
-        }));
-      } catch (err) {
-        simulateMarketFluctuations();
+    localStorage.setItem('alpha_quant_ledger', JSON.stringify(ledger));
+  }, [ledger]);
+
+  // Hook to simulate high frequency market order movements
+  useEffect(() => {
+    const interval = setInterval(() => {
+      // Simulate slight spot price drift
+      setMarketData(prev => {
+        const copy = { ...prev };
+        Object.keys(copy).forEach(ticker => {
+          const delta = (Math.random() - 0.495) * (copy[ticker].currentPrice * 0.0005);
+          copy[ticker].currentPrice = parseFloat((copy[ticker].currentPrice + delta).toFixed(2));
+        });
+        return copy;
+      });
+
+      // Re-generate volatile depth tiers for the active order book canvas
+      const midPrice = marketData[selectedAsset].currentPrice;
+      const simulatedAsks = [];
+      const simulatedBids = [];
+
+      for (let i = 1; i <= 8; i++) {
+        const askPrice = parseFloat((midPrice + (i * (midPrice * 0.00015))).toFixed(2));
+        const askSize = parseFloat((Math.random() * 2.5 + 0.1).toFixed(4));
+        simulatedAsks.unshift({ price: askPrice, size: askSize, total: parseFloat((askPrice * askSize).toFixed(2)) });
+
+        const bidPrice = parseFloat((midPrice - (i * (midPrice * 0.00015))).toFixed(2));
+        const bidSize = parseFloat((Math.random() * 2.5 + 0.1).toFixed(4));
+        simulatedBids.push({ price: bidPrice, size: bidSize, total: parseFloat((bidPrice * bidSize).toFixed(2)) });
       }
-    };
-    
-    eventSource.onerror = () => {
-      setIsConnected(false);
-      const interval = setInterval(simulateMarketFluctuations, 3000);
-      return () => clearInterval(interval);
-    };
-    
-    return () => eventSource.close();
-  }, []);
 
-  // Generate real-time Order Book matching selections
-  useEffect(() => {
-    const basePrice = marketData[selectedAsset].currentPrice;
-    const generatedBids = [];
-    const generatedAsks = [];
-    
-    for (let i = 1; i <= 5; i++) {
-      generatedBids.push({
-        price: basePrice * (1 - (i * 0.0005)),
-        size: Math.random() * 4 + 0.1
-      });
-      generatedAsks.push({
-        price: basePrice * (1 + (i * 0.0005)),
-        size: Math.random() * 4 + 0.1
-      });
-    }
-    setOrderBook({ bids: generatedBids, asks: generatedAsks.reverse() });
-  }, [selectedAsset, marketData[selectedAsset].currentPrice]);
+      setOrderBook({ asks: simulatedAsks, bids: simulatedBids });
+    }, 450);
 
-  const simulateMarketFluctuations = () => {
-    setMarketData(prev => {
-      const copy = { ...prev };
-      Object.keys(copy).forEach(ticker => {
-        const shiftPct = (Math.random() - 0.5) * 0.001;
-        copy[ticker].currentPrice = copy[ticker].currentPrice * (1 + shiftPct);
-      });
-      return copy;
-    });
+    return () => clearInterval(interval);
+  }, [selectedAsset, marketData]);
+
+  // Order Routing Mechanism
+  const executeMarketOrder = (side) => {
+    const executionPrice = marketData[selectedAsset].currentPrice;
+    const randomSize = parseFloat((Math.random() * 0.5 + 0.01).toFixed(4));
+    
+    const newRecord = {
+      timestamp: new Date().toLocaleTimeString(),
+      asset: selectedAsset,
+      type: `MARKET_${side}`,
+      price: executionPrice,
+      size: randomSize,
+      totalValue: parseFloat((executionPrice * randomSize).toFixed(2))
+    };
+
+    setLedger(prev => [newRecord, ...prev]);
+    triggerNotification(`SUCCESS: Routed ${side} order for ${randomSize} ${selectedAsset} @ $${executionPrice}`, 'success');
   };
 
-  const executeTrade = (type) => {
-    const amount = parseFloat(tradeAmount);
-    if (isNaN(amount) || amount <= 0) {
-      showToast('Invalid allocation size input.', 'error');
-      return;
-    }
-
-    const currentPrice = marketData[selectedAsset].currentPrice;
-    const totalCost = amount * currentPrice;
-
-    if (type === 'BUY') {
-      if (totalCost > portfolio.cashBalance) {
-        showToast('Insufficient fiat capital balance.', 'error');
-        return;
-      }
-      
-      setPortfolio(prev => {
-        const currentHeld = prev.positions[selectedAsset];
-        const oldAvg = prev.avgBuyPrice[selectedAsset];
-        const newHeld = currentHeld + amount;
-        const newAvg = ((currentHeld * oldAvg) + totalCost) / newHeld;
-
-        return {
-          cashBalance: prev.cashBalance - totalCost,
-          positions: { ...prev.positions, [selectedAsset]: newHeld },
-          avgBuyPrice: { ...prev.avgBuyPrice, [selectedAsset]: newAvg }
-        };
-      });
-
-      // Append transaction directly into local state ledger
-      setLedger(prev => [{
-        id: Date.now(),
-        timestamp: new Date().toLocaleTimeString(),
-        type: 'BUY',
-        asset: selectedAsset,
-        amount,
-        price: currentPrice,
-        total: totalCost
-      }, ...prev]);
-
-      showToast(`Successfully purchased ${amount} ${selectedAsset}`, 'success');
-    } else if (type === 'SELL') {
-      if (amount > portfolio.positions[selectedAsset]) {
-        showToast('Position liquidation size exceeds balance limits.', 'error');
-        return;
-      }
-
-      setPortfolio(prev => ({
-        cashBalance: prev.cashBalance + totalCost,
-        positions: { ...prev.positions, [selectedAsset]: prev.positions[selectedAsset] - amount },
-        avgBuyPrice: prev.positions[selectedAsset] - amount === 0 
-          ? { ...prev.avgBuyPrice, [selectedAsset]: 0 } 
-          : prev.avgBuyPrice
-      }));
-
-      setLedger(prev => [{
-        id: Date.now(),
-        timestamp: new Date().toLocaleTimeString(),
-        type: 'SELL',
-        asset: selectedAsset,
-        amount,
-        price: currentPrice,
-        total: totalCost
-      }, ...prev]);
-
-      showToast(`Liquidated ${amount} ${selectedAsset}`, 'success');
-    }
-    setTradeAmount('');
-  };
-
-  const showToast = (msg, status) => {
+  const triggerNotification = (msg, status) => {
     setNotification({ msg, status });
     setTimeout(() => setNotification(null), 3000);
   };
 
-  const activeAsset = marketData[selectedAsset];
-  const isPositive = activeAsset.priceChange24h >= 0;
-  const heldUnits = portfolio.positions[selectedAsset];
-  const avgCost = portfolio.avgBuyPrice[selectedAsset];
-  const currentValuation = heldUnits * activeAsset.currentPrice;
-  const initialCostBasis = heldUnits * avgCost;
-  const currentAssetPnL = currentValuation - initialCostBasis;
-
   return (
     <div className="dashboard-container">
-      <style>{`
-        .dashboard-container { min-height: 100vh; background-color: #070b19; color: #f8fafc; font-family: system-ui, sans-serif; display: flex; align-items: center; justify-content: center; padding: 20px; box-sizing: border-box; }
-        .hud-card { width: 100%; max-width: 1200px; background: #111a2e; border: 1px solid #1e293b; border-radius: 24px; padding: 28px; box-shadow: 0 25px 60px -15px rgba(0,0,0,0.7); }
-        .header-panel { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1e293b; padding-bottom: 20px; margin-bottom: 24px; }
-        .title-h1 { font-size: 26px; font-weight: 900; background: linear-gradient(to right, #38bdf8, #6366f1); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin: 0; }
-        .workspace-grid { display: grid; grid-template-columns: 260px 1fr; gap: 24px; }
-        @media (max-width: 900px) { .workspace-grid { grid-template-columns: 1fr; } }
-        .asset-list { display: flex; flex-direction: column; gap: 10px; }
-        .asset-row { padding: 14px 18px; border-radius: 14px; background: #16223f; border: 1px solid #223154; cursor: pointer; display: flex; justify-content: space-between; align-items: center; transition: all 0.2s; }
-        .asset-row.active { border-color: #38bdf8; background: #1e2e5c; box-shadow: 0 0 15px rgba(56,189,248,0.15); }
-        .main-desk { display: flex; flex-direction: column; gap: 20px; }
-        .center-layout-grid { display: grid; grid-template-columns: 1.2fr 1fr; gap: 20px; }
-        @media (max-width: 768px) { .center-layout-grid { grid-template-columns: 1fr; } }
-        .panel-box { background: #0b1329; border: 1px solid #1e293b; border-radius: 16px; padding: 20px; }
-        .price-huge { font-size: 40px; font-weight: 900; font-family: monospace; color: #ffffff; margin: 10px 0; }
-        .action-input { width: 100%; padding: 12px; background: #111a2e; border: 1px solid #223154; border-radius: 10px; color: white; font-family: monospace; margin-bottom: 12px; box-sizing: border-box; }
-        .btn-group { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-        .trade-btn { border: none; padding: 12px; font-weight: 800; border-radius: 10px; cursor: pointer; text-transform: uppercase; font-size: 12px; }
-        .btn-buy { background: #10b981; color: #042f1a; }
-        .btn-sell { background: #f43f5e; color: #4c0519; }
-        .book-row { display: flex; justify-content: space-between; font-family: monospace; font-size: 12px; padding: 4px 0; }
-        .ledger-table { width: 100%; border-collapse: collapse; font-size: 12px; text-align: left; }
-        .ledger-table th { color: #475569; padding: 8px; border-bottom: 1px solid #1e293b; }
-        .ledger-table td { padding: 8px; border-bottom: 1px solid #1e293b/40; }
-        .toast { position: fixed; bottom: 20px; right: 20px; padding: 14px 24px; border-radius: 12px; font-weight: 700; font-size: 13px; z-index: 100; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
-      `}</style>
-
+      <style>{styles}</style>
+      
       {notification && (
-        <div className="toast" style={{ backgroundColor: notification.status === 'success' ? '#10b981' : '#f43f5e', color: '#fff' }}>
+        <div className="toast" style={{ backgroundColor: notification.status === 'success' ? '#238636' : '#da3633' }}>
           {notification.msg}
         </div>
       )}
@@ -205,135 +212,126 @@ export default function App() {
         <div className="header-panel">
           <div>
             <h1 className="title-h1">ALPHA QUANT WORKING HUB v1.1</h1>
-            <div style={{ color: '#64748b', fontSize: '13px', marginTop: '4px' }}>Multi-Asset Algorithmic Order Management Terminal</div>
+            <div style={{ color: '#6e7681', fontSize: '13px', marginTop: '4px' }}>Real-Time Algorithmic Operations Console</div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-            <div style={{ textAlign: 'right' }}>
-              <span style={{ color: '#475569', fontSize: '11px', display: 'block' }}>AVAILABLE CASH BALANCE</span>
-              <strong style={{ color: '#38bdf8', fontSize: '15px', fontFamily: 'monospace' }}>${portfolio.cashBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#070b19', padding: '6px 12px', borderRadius: '10px', fontSize: '11px', border: '1px solid #1e293b' }}>
-              <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: isConnected ? '#10b981' : '#f43f5e' }} />
-              <span style={{ color: '#94a3b8', fontWeight: 'bold' }}>{isConnected ? 'LIVE PIPELINE' : 'SIM MONITOR'}</span>
-            </div>
+          <div style={{ textAlign: 'right' }}>
+            <span style={{ color: '#475569', fontSize: '11px', display: 'block' }}>COMMS RECEPTOR</span>
+            <strong style={{ color: '#38bdf8', fontSize: '15px', fontFamily: 'monospace' }}>
+              <span style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#94a3b8', marginRight: '6px' }}></span>
+              CONNECTED_STREAM
+            </strong>
           </div>
         </div>
+      </div>
 
-        <div className="workspace-grid">
-          {/* Side watch-strip selection layout */}
+      <div className="workspace-grid">
+        {/* Left Side: Asset list watchlist layout */}
+        <div className="hud-card">
+          <h2 className="hud-card-title">Asset Tracker Watchlist</h2>
           <div className="asset-list">
             {Object.keys(marketData).map(ticker => (
-              <div key={ticker} className={`asset-row ${selectedAsset === ticker ? 'active' : ''}`} onClick={() => setSelectedAsset(ticker)}>
+              <div 
+                key={ticker} 
+                className={`asset-row ${selectedAsset === ticker ? 'selected' : ''}`}
+                onClick={() => setSelectedAsset(ticker)}
+              >
                 <div>
-                  <strong style={{ display: 'block', fontSize: '14px', color: '#f1f5f9' }}>{ticker}/USD</strong>
+                  <strong style={{ display: 'block', fontSize: '14px', color: '#f1f5f9' }}>{ticker}</strong>
                   <span style={{ fontSize: '11px', color: '#475569' }}>{marketData[ticker].name}</span>
                 </div>
                 <div style={{ textAlign: 'right', fontFamily: 'monospace' }}>
-                  <div style={{ fontSize: '13px', fontWeight: '700' }}>${marketData[ticker].currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
-                  <span style={{ fontSize: '10px', fontWeight: '800', color: marketData[ticker].priceChange24h >= 0 ? '#10b981' : '#f43f5e' }}>
-                    {marketData[ticker].priceChange24h >= 0 ? '+' : ''}{marketData[ticker].priceChange24h.toFixed(2)}%
+                  <div style={{ fontSize: '13px', fontWeight: '700' }}>${marketData[ticker].currentPrice.toLocaleString()}</div>
+                  <span style={{ fontSize: '10px', fontWeight: '800', color: marketData[ticker].priceChange24h >= 0 ? '#34d399' : '#f87171' }}>
+                    {marketData[ticker].priceChange24h >= 0 ? '+' : ''}{marketData[ticker].priceChange24h}%
                   </span>
                 </div>
               </div>
             ))}
           </div>
 
-          {/* Central Workspace Desktop Panel Group */}
-          <div className="main-desk">
-            <div className="center-layout-grid">
-              
-              {/* Box 1: Core metric box + transaction trigger inputs */}
-              <div className="panel-box flex flex-col justify-between">
-                <div>
-                  <span style={{ fontSize: '11px', fontWeight: '800', color: '#475569', letterSpacing: '0.5px' }}>PRIMARY PRICE QUOTE</span>
-                  <div className="price-huge">${activeAsset.currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                </div>
-                
-                <div style={{ marginTop: '20px' }}>
-                  <input type="number" className="action-input" placeholder={`Allocation Size in ${selectedAsset}`} value={tradeAmount} onChange={(e) => setTradeAmount(e.target.value)} />
-                  <div className="btn-group">
-                    <button className="trade-btn btn-buy" onClick={() => executeTrade('BUY')}>Buy {selectedAsset}</button>
-                    <button className="trade-btn btn-sell" onClick={() => executeTrade('SELL')}>Sell {selectedAsset}</button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Box 2: Live Fluid Liquidity Order Book component */}
-              <div className="panel-box">
-                <span style={{ fontSize: '11px', fontWeight: '800', color: '#6366f1', display: 'block', marginBottom: '8px' }}>REAL-TIME ORDER BOOK</span>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                  {orderBook.asks.map((ask, i) => (
-                    <div key={`ask-${i}`} className="book-row" style={{ color: '#f43f5e' }}>
-                      <span>${ask.price.toFixed(2)}</span>
-                      <span>{ask.size.toFixed(4)}</span>
-                    </div>
-                  ))}
-                  <div style={{ height: '1px', background: '#1e293b', margin: '6px 0' }} />
-                  {orderBook.bids.map((bid, i) => (
-                    <div key={`bid-${i}`} className="book-row" style={{ color: '#10b981' }}>
-                      <span>${bid.price.toFixed(2)}</span>
-                      <span>{bid.size.toFixed(4)}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-            </div>
-
-            {/* Middle Module: Portfolio Position Inventory Status */}
-            <div className="panel-box" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px', textAlign: 'center', background: '#090e1a' }}>
-              <div>
-                <span style={{ display: 'block', fontSize: '11px', color: '#475569' }}>POSITION BALANCES</span>
-                <strong style={{ fontSize: '15px', color: '#cbd5e1', fontFamily: 'monospace' }}>{heldUnits.toFixed(4)} {selectedAsset}</strong>
-              </div>
-              <div>
-                <span style={{ display: 'block', fontSize: '11px', color: '#475569' }}>ENTRY COST BASIS</span>
-                <strong style={{ fontSize: '15px', color: '#cbd5e1', fontFamily: 'monospace' }}>${avgCost.toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong>
-              </div>
-              <div>
-                <span style={{ display: 'block', fontSize: '11px', color: '#475569' }}>UNREALIZED P&amp;L</span>
-                <strong style={{ fontSize: '15px', fontFamily: 'monospace', color: currentAssetPnL > 0 ? '#10b981' : currentAssetPnL < 0 ? '#f43f5e' : '#64748b' }}>
-                  {currentAssetPnL > 0 ? '+' : ''}${currentAssetPnL.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                </strong>
-              </div>
-            </div>
-
-            {/* Base Module: Persistent Local Transaction Audit Ledger */}
-            <div className="panel-box" style={{ maxHeight: '200px', overflowY: 'auto' }}>
-              <span style={{ fontSize: '11px', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '10px' }}>ACCOUNT TRANSACTION HISTORY AUDIT LEDGER</span>
-              {ledger.length === 0 ? (
-                <div style={{ color: '#475569', fontSize: '13px', textAlign: 'center', padding: '20px' }}>No clearing operations logged in this working session.</div>
-              ) : (
-                <table className="ledger-table">
-                  <thead>
-                    <tr>
-                      <th>TIMESTAMP</th>
-                      <th>ACTION</th>
-                      <th>ASSET</th>
-                      <th>AMOUNT</th>
-                      <th>EXECUTION PRICE</th>
-                      <th>TOTAL VALUE</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {ledger.map(tx => (
-                      <tr key={tx.id}>
-                        <td style={{ color: '#64748b', fontFamily: 'monospace' }}>{tx.timestamp}</td>
-                        <td style={{ fontWeight: 'bold', color: tx.type === 'BUY' ? '#10b981' : '#f43f5e' }}>{tx.type}</td>
-                        <td>{tx.asset}</td>
-                        <td style={{ fontFamily: 'monospace' }}>{tx.amount}</td>
-                        <td style={{ fontFamily: 'monospace' }}>${tx.price.toFixed(2)}</td>
-                        <td style={{ fontFamily: 'monospace', color: '#f1f5f9' }}>${tx.total.toFixed(2)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-
+          <div style={{ marginTop: '20px', background: '#0d1117', padding: '10px', borderRadius: '4px', border: '1px solid #21262d' }}>
+            <div style={{ fontSize: '11px', color: '#8b949e', textTransform: 'uppercase', marginBottom: '4px' }}>Intelligence Feed</div>
+            <p style={{ margin: 0, fontSize: '12px', color: '#58a6ff', lineHeight: '1.4' }}>{marketData[selectedAsset].aiSummary}</p>
           </div>
         </div>
 
+        {/* Right Side: Active High-Frequency Analytics Grid */}
+        <div>
+          <div className="hud-card">
+            <h2 className="hud-card-title">{selectedAsset} Real-Time Liquidity Order Book</h2>
+            
+            <div className="order-book-grid">
+              <div>
+                <div className="book-side-title title-ask">ORDER ASKS (SELL WALL)</div>
+                {orderBook.asks.map((row, idx) => (
+                  <div key={`ask-${idx}`} className="book-row ask">
+                    <span>${row.price.toLocaleString()}</span>
+                    <span>{row.size}</span>
+                  </div>
+                ))}
+              </div>
+              <div>
+                <div className="book-side-title title-bid">ORDER BIDS (BUY LIQUIDITY)</div>
+                {orderBook.bids.map((row, idx) => (
+                  <div key={`bid-${idx}`} className="book-row bid">
+                    <span>${row.price.toLocaleString()}</span>
+                    <span>{row.size}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '15px', marginTop: '20px', paddingTop: '15px', borderTop: '1px dashed #30363d' }}>
+              <button className="action-btn" onClick={() => executeMarketOrder('LONG')}>INSTANT MARKET LONG (BUY)</button>
+              <button className="action-btn short" onClick={() => executeMarketOrder('SHORT')}>INSTANT MARKET SHORT (SELL)</button>
+            </div>
+          </div>
+
+          {/* Session Ledger Logs Card */}
+          <div className="hud-card">
+            <div style={{ display: 'flex', justifyContent: 'bwtween', alignItems: 'center', justifyContent: 'space-between' }}>
+              <h2 className="hud-card-title" style={{ margin: 0, borderBottom: 'none', paddingBottom: 0 }}>Persistent Session Auditing Ledger</h2>
+              {ledger.length > 0 && (
+                <button 
+                  onClick={() => { setLedger([]); localStorage.removeItem('alpha_quant_ledger'); }} 
+                  style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '11px', fontFamily: 'inherit' }}
+                >
+                  [CLEAR CACHE LOGS]
+                </button>
+              )}
+            </div>
+            {ledger.length === 0 ? (
+              <div style={{ padding: '20px', textAlignment: 'center', textAlign: 'center', color: '#485563', fontSize: '13px' }}>
+                No operations routed in this environment container session yet. Execute an instant order above to populate ledger channels.
+              </div>
+            ) : (
+              <table className="ledger-table">
+                <thead>
+                  <tr>
+                    <th>Timestamp</th>
+                    <th>Asset</th>
+                    <th>Type</th>
+                    <th>Price</th>
+                    <th>Size</th>
+                    <th>Total Capitalization</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ledger.map((tx, idx) => (
+                    <tr key={idx}>
+                      <td>{tx.timestamp}</td>
+                      <td style={{ color: '#58a6ff', fontWeight: 'bold' }}>{tx.asset}</td>
+                      <td style={{ color: tx.type.includes('LONG') ? '#34d399' : '#f87171' }}>{tx.type}</td>
+                      <td>${tx.price.toLocaleString()}</td>
+                      <td>{tx.size}</td>
+                      <td>${tx.totalValue.toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
