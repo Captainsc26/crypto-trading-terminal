@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 
-// Unified UI CSS Styles
+// Production UI Theme Stylesheet
 const styles = `
   .dashboard-container {
     background-color: #0d1117;
@@ -126,20 +126,31 @@ export default function App() {
   const [orderBook, setOrderBook] = useState({ asks: [], bids: [] });
   const [notification, setNotification] = useState(null);
 
-  // PERSISTENT WALLET STATE: Read logged transactions out of browser cache on initialization
+  // 1. PERSISTENT ACCOUNT WALLET STATES (LocalStorage Layer)
+  const [walletBalance, setWalletBalance] = useState(() => {
+    const savedBalance = localStorage.getItem('alpha_quant_balance');
+    return savedBalance ? parseFloat(savedBalance) : 100000.00;
+  });
+
+  const [activePositions, setActivePositions] = useState(() => {
+    const savedPositions = localStorage.getItem('alpha_quant_positions');
+    return savedPositions ? JSON.parse(savedPositions) : {};
+  });
+
   const [ledger, setLedger] = useState(() => {
     const savedLedger = localStorage.getItem('alpha_quant_ledger');
     return savedLedger ? JSON.parse(savedLedger) : [];
   });
 
-  // Watch ledger data array and write to localStorage whenever modifications clear
+  // Keep state collections locked into internal browser storage cache automatically
   useEffect(() => {
+    localStorage.setItem('alpha_quant_balance', walletBalance.toString());
+    localStorage.setItem('alpha_quant_positions', JSON.stringify(activePositions));
     localStorage.setItem('alpha_quant_ledger', JSON.stringify(ledger));
-  }, [ledger]);
+  }, [walletBalance, activePositions, ledger]);
 
-  // LIVE LIVE DATA HOOK: Establishes a raw WebSocket tunnel with the Binance public API
+  // 2. REAL-TIME EVENT-DRIVEN WEBSOCKET RECEPTOR HOOK
   useEffect(() => {
-    // Map current assets over to compliant Binance pair formats
     const tradingPair = `${selectedAsset.toLowerCase()}usdt`;
     const wsUrl = `wss://stream.binance.com:9443/ws/${tradingPair}@depth10@100ms`;
     const socket = new WebSocket(wsUrl);
@@ -149,11 +160,10 @@ export default function App() {
         const data = JSON.parse(event.data);
         if (!data.asks || !data.bids) return;
 
-        // Structure raw websocket strings into dashboard components
         const processedAsks = data.asks.slice(0, 8).map(ask => ({
           price: parseFloat(ask[0]),
           size: parseFloat(ask[1])
-        })).reverse(); // Reverse formatting positions highest ask values on top
+        })).reverse();
 
         const processedBids = data.bids.slice(0, 8).map(bid => ({
           price: parseFloat(bid[0]),
@@ -162,48 +172,79 @@ export default function App() {
 
         setOrderBook({ asks: processedAsks, bids: processedBids });
 
-        // Calculate a live mid-market estimation to update side tickers
         if (processedBids[0] && processedAsks[0]) {
           const midPrice = parseFloat(((processedBids[0].price + processedAsks[0].price) / 2).toFixed(2));
           setMarketData(prev => ({
             ...prev,
-            [selectedAsset]: {
-              ...prev[selectedAsset],
-              currentPrice: midPrice
-            }
+            [selectedAsset]: { ...prev[selectedAsset], currentPrice: midPrice }
           }));
         }
       } catch (err) {
-        console.error("Stream Parsing Issue: ", err);
+        console.error("Stream parsing disruption: ", err);
       }
     };
 
-    socket.onerror = (error) => console.error("WebSocket Stream Disruption:", error);
-    return () => socket.close(); // Tear down streaming web listeners if switching selected tickers
+    socket.onerror = (error) => console.error("WebSocket Pipeline Exception:", error);
+    return () => socket.close();
   }, [selectedAsset]);
 
-  // Handle Mock Order Submissions and append updates onto our cache pipeline
+  // 3. ACCOUNT BALANCE & EXCH_ROUTING LOGIC
   const executeMarketOrder = (side) => {
     const currentSpotPrice = marketData[selectedAsset].currentPrice;
     const sizeMultiplier = selectedAsset === 'BTC' ? 0.05 : selectedAsset === 'ETH' ? 0.5 : 5.0;
     const simulatedSize = parseFloat((Math.random() * sizeMultiplier + 0.01).toFixed(4));
-    
+    const tradeValue = parseFloat((currentSpotPrice * simulatedSize).toFixed(2));
+
+    if (side === 'LONG' && tradeValue > walletBalance) {
+      triggerToast("CRITICAL: Insufficient Capital for Order Routing Allocation", "error");
+      return;
+    }
+
+    if (side === 'LONG') {
+      setWalletBalance(prev => parseFloat((prev - tradeValue).toFixed(2)));
+      setActivePositions(prev => ({
+        ...prev,
+        [selectedAsset]: parseFloat(((prev[selectedAsset] || 0) + simulatedSize).toFixed(4))
+      }));
+    } else {
+      const currentHolding = activePositions[selectedAsset] || 0;
+      if (currentHolding < simulatedSize) {
+        triggerToast(`CRITICAL: Insufficient Asset Balance to liquidate ${selectedAsset}`, "error");
+        return;
+      }
+      setWalletBalance(prev => parseFloat((prev + tradeValue).toFixed(2)));
+      setActivePositions(prev => ({
+        ...prev,
+        [selectedAsset]: parseFloat((currentHolding - simulatedSize).toFixed(4))
+      }));
+    }
+
     const tradeEntry = {
       timestamp: new Date().toLocaleTimeString(),
       asset: selectedAsset,
       type: `MARKET_${side}`,
       price: currentSpotPrice,
       size: simulatedSize,
-      totalValue: parseFloat((currentSpotPrice * simulatedSize).toFixed(2))
+      totalValue: tradeValue
     };
 
     setLedger(prev => [tradeEntry, ...prev]);
-    triggerToast(`SUCCESS: Executed ${side} for ${simulatedSize} ${selectedAsset} @ $${currentSpotPrice}`, 'success');
+    triggerToast(`ROUTED: ${side} ${simulatedSize} ${selectedAsset} @ $${currentSpotPrice}`, 'success');
   };
 
   const triggerToast = (msg, status) => {
     setNotification({ msg, status });
     setTimeout(() => setNotification(null), 3000);
+  };
+
+  const resetEnvironmentDefaults = () => {
+    setLedger([]);
+    setWalletBalance(100000.00);
+    setActivePositions({});
+    localStorage.removeItem('alpha_quant_ledger');
+    localStorage.removeItem('alpha_quant_balance');
+    localStorage.removeItem('alpha_quant_positions');
+    triggerToast("SYSTEM RESET: Database logs and cash allocations cleared.", "success");
   };
 
   return (
@@ -216,7 +257,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Main Container Banner */}
+      {/* Primary Dashboard HUD Head Panel */}
       <div className="hud-card">
         <div className="header-panel">
           <div>
@@ -231,10 +272,22 @@ export default function App() {
             </strong>
           </div>
         </div>
+
+        {/* Dynamic Balance Tracking Card Bar */}
+        <div style={{ display: 'flex', gap: '30px', marginTop: '15px', background: '#0d1117', padding: '12px', borderRadius: '4px', border: '1px solid #21262d' }}>
+          <div>
+            <span style={{ fontSize: '10px', color: '#8b949e', display: 'block', fontWeight: 'bold' }}>AVAILABLE LIQUIDITY CAPITAL</span>
+            <strong style={{ fontSize: '18px', color: '#56e39f', fontFamily: 'monospace' }}>${walletBalance.toLocaleString(undefined, {minimumFractionDigits: 2})} USD</strong>
+          </div>
+          <div>
+            <span style={{ fontSize: '10px', color: '#8b949e', display: 'block', fontWeight: 'bold' }}>ACTIVE {selectedAsset} POSITION HOLDINGS</span>
+            <strong style={{ fontSize: '18px', color: '#38bdf8', fontFamily: 'monospace' }}>{activePositions[selectedAsset] || "0.0000"} {selectedAsset}</strong>
+          </div>
+        </div>
       </div>
 
       <div className="workspace-grid">
-        {/* Watchlist Section */}
+        {/* Left Hand: Core Watchlist Panel */}
         <div className="hud-card">
           <h2 className="hud-card-title">Exchange Core Watchlist</h2>
           <div>
@@ -264,9 +317,9 @@ export default function App() {
           </div>
         </div>
 
-        {/* Analytics Workspace Area */}
+        {/* Right Hand: Liquidity Analysis Panels */}
         <div>
-          {/* Order Book Card */}
+          {/* Order Book Depth Canvas */}
           <div className="hud-card">
             <h2 className="hud-card-title">{selectedAsset} Order Depth Liquidity Book</h2>
             
@@ -299,16 +352,16 @@ export default function App() {
             </div>
           </div>
 
-          {/* Audit Ledger Card */}
+          {/* Audit Logging Table */}
           <div className="hud-card">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h2 className="hud-card-title" style={{ margin: 0, borderBottom: 'none', paddingBottom: 0 }}>Persistent Session Auditing Ledger</h2>
-              {ledger.length > 0 && (
+              {(ledger.length > 0 || walletBalance !== 100000.00) && (
                 <button 
-                  onClick={() => { setLedger([]); localStorage.removeItem('alpha_quant_ledger'); }} 
+                  onClick={resetEnvironmentDefaults} 
                   style={{ background: 'none', border: 'none', color: '#f85149', cursor: 'pointer', fontSize: '11px', fontFamily: 'inherit' }}
                 >
-                  [CLEAR CACHE ENGINE]
+                  [RESET WORKSPACE DB]
                 </button>
               )}
             </div>
